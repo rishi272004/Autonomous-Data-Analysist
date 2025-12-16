@@ -2,10 +2,13 @@ from groq import Groq
 import logging
 import os
 import re
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+# Look for .env in the project root directory
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +16,11 @@ logger = logging.getLogger(__name__)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    logger.warning("GROQ_API_KEY not found in environment variables. Please check your .env file.")
+    logger.error(f"GROQ_API_KEY not found. Checked at: {env_path}")
+    logger.error(f"Environment variables: {list(os.environ.keys())}")
     raise ValueError("Missing GROQ_API_KEY in environment variables")
 
+logger.info(f"GROQ_API_KEY loaded successfully (length: {len(GROQ_API_KEY)})")
 groq_client = Groq(api_key=GROQ_API_KEY)
 logger.info("Groq client initialized successfully")
 
