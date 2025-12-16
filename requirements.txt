@@ -1,0 +1,15 @@
+# requirements.txt
+Flask
+Flask-Bootstrap5
+pandas
+sqlalchemy
+mysql-connector-python
+openpyxl
+matplotlib
+prophet
+groq
+python-dotenv
+Werkzeug
+# For Word report generation and image handling
+python-docx>=0.8.11
+Pillow>=9.0.0
