@@ -2,17 +2,22 @@ from groq import Groq
 import logging
 import os
 import re
-import dotenv 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 # Initialize Groq client using your API key
-GROQ_API_KEY = "GROQ_API_KEY"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    raise ValueError("Missing GROQ_API_KEY")
+    logger.warning("GROQ_API_KEY not found in environment variables. Please check your .env file.")
+    raise ValueError("Missing GROQ_API_KEY in environment variables")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+logger.info("Groq client initialized successfully")
 
 def query_gemini(prompt: str, model: str = "llama-3.3-70b-versatile") -> str:
     """
