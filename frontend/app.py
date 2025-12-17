@@ -62,8 +62,19 @@ def df_to_excel(df):
     return output.getvalue()
 
 def encode_image(buf):
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode('utf-8')
+    try:
+        buf.seek(0)
+        data = buf.read()
+        logger.debug(f"encode_image: read {len(data)} bytes from buffer")
+        if len(data) == 0:
+            logger.error("encode_image: buffer data is empty!")
+            return None
+        b64 = base64.b64encode(data).decode('utf-8')
+        logger.debug(f"encode_image: encoded to base64, length {len(b64)}")
+        return b64
+    except Exception as e:
+        logger.error(f"encode_image failed: {e}", exc_info=True)
+        return None
 
 def safe_read_json(json_str, orient='split'):
     if json_str:
@@ -127,23 +138,20 @@ def extract_sql_columns(sql_text: str):
     return []
 
 def should_show_table(user_query: str, df: pd.DataFrame) -> bool:
-    q = (user_query or "").lower()
-    # Strong signals to force table view
-    force_table_keywords = [
-        'list', 'table', 'show', 'detail', 'breakdown', 'top', 'bottom',
-        'by ', ' per ', 'group', 'groups', 'rank', 'compare', 'comparison'
-    ]
-    if any(k in q for k in force_table_keywords):
-        return True
-    # If result is clearly tabular (multiple rows or many columns), show table
-    n_rows, n_cols = df.shape
-    if n_rows > 3 or n_cols > 3:
-        return True
-    # Small KPI-style outputs should not show table
-    kpi_keywords = ['total', 'sum', 'average', 'avg', 'profit', 'revenue', 'sales', 'discount', 'margin']
-    if n_rows <= 3 and n_cols <= 2 and any(k in q for k in kpi_keywords):
+    """
+    Determine if a table should be displayed for query results.
+    ALWAYS shows the table if data is available, because:
+    1. Tables provide clear data representation
+    2. Users may want to see the actual data, not just explanations
+    3. Both visualizations AND tables are valuable for analysis
+    """
+    # If dataframe is empty or None, don't show table
+    if df is None or df.empty:
         return False
-    return False
+    
+    # ALWAYS show table if data is available (has at least 1 row)
+    # This ensures visualizations from LLM queries are displayed as tables
+    return True
 
 def safe_json_loads(text: str):
     """
@@ -409,27 +417,54 @@ Provide concise, point-wise insights with specific numbers. Each point should be
             # Ensure point-wise HTML formatting
             explanation = format_explanation_to_html(explanation_raw)
 
-            # Only generate visualization if data has multiple rows
+            # Generate visualization for all data
             viz_b64 = None
             chart_b64s = []
-            if is_visualizable and not df.empty and len(df) > 1:
+            
+            # Always try to generate visualization if we have data
+            if df is not None and not df.empty:
                 try:
                     viz_buf = generate_visualization(df)
-                    if viz_buf and viz_buf.getvalue():  # Check if buffer has content
-                        viz_b64 = encode_image(viz_buf)
-                    else:
-                        logger.warning(f"Empty visualization buffer for {title}")
-                    
-                    _, charts = execute_advanced_analysis(df, purpose)
-                    chart_b64s = [(t, encode_image(b)) for t, b in charts if b and b.getvalue()]
+                    if viz_buf:
+                        try:
+                            buf_data = viz_buf.getvalue()
+                            if buf_data and len(buf_data) > 0:
+                                viz_b64 = encode_image(viz_buf)
+                                logger.info(f"Section {title}: Generated visualization ({len(buf_data)} bytes)")
+                            else:
+                                logger.warning(f"Section {title}: Visualization buffer empty")
+                        except Exception as e:
+                            logger.warning(f"Section {title}: Failed to encode visualization: {e}")
                 except Exception as viz_error:
-                    logger.error(f"Visualization failed for {title}: {viz_error}", exc_info=True)
+                    logger.warning(f"Section {title}: Visualization generation failed: {viz_error}", exc_info=False)
                     viz_b64 = None
+                
+                # Try to generate additional charts from advanced analysis
+                try:
+                    _, charts = execute_advanced_analysis(df, purpose, generate_charts=True)
+                    chart_b64s = []
+                    for t, b in charts:
+                        try:
+                            if b:
+                                buf_data = b.getvalue()
+                                if buf_data and len(buf_data) > 0:
+                                    chart_b64s.append((t, encode_image(b)))
+                        except Exception as chart_err:
+                            logger.warning(f"Section {title}: Failed to encode chart {t}: {chart_err}")
+                except Exception as advanced_error:
+                    logger.warning(f"Section {title}: Advanced analysis failed: {advanced_error}")
                     chart_b64s = []
             else:
-                logger.info(f"Skipping visualization for {title}: rows={len(df)}, empty={df.empty}, visualizable={is_visualizable}")
+                logger.warning(f"Section {title}: No data to visualize")
 
-            df_html = df.to_html(classes='table table-striped table-responsive', escape=False)
+            # Create properly styled table HTML with responsive wrapper
+            table_html = df.to_html(classes='table table-striped table-hover table-sm', escape=False, index=False)
+            # Wrap in responsive container with better styling
+            df_html = f"""
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                {table_html}
+            </div>
+            """
 
             return {
                 'title': title,
@@ -439,7 +474,7 @@ Provide concise, point-wise insights with specific numbers. Each point should be
                 'chart_b64s': chart_b64s
             }
         except Exception as e:
-            logger.error(f"Section {title} failed: {e}")
+            logger.error(f"Section {title} failed: {e}", exc_info=True)
             return None
 
     # Parallel execution of sections
@@ -448,9 +483,9 @@ Provide concise, point-wise insights with specific numbers. Each point should be
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for sec in sections_list[:6]:
             futures.append(executor.submit(process_section, sec))
-        for fut in as_completed(futures):
+        for fut in as_completed(futures, timeout=180):  # 3 minute timeout per section
             try:
-                res = fut.result()
+                res = fut.result(timeout=180)
                 if res:
                     sections.append(res)
             except Exception as e:
@@ -734,9 +769,35 @@ def index():
                             # Conditionally generate visualization only when requested
                             viz_b64 = None
                             generate_viz = ('generate_viz' in request.form and request.form.get('generate_viz') == '1')
-                            if generate_viz:
-                                viz_buf = generate_visualization(df_result_global)
-                                viz_b64 = encode_image(viz_buf)
+                            
+                            # Always try to generate visualization if we have data
+                            viz_b64 = None
+                            if not df_result_global.empty and len(df_result_global) >= 2:
+                                logger.info(f"Attempting visualization for {len(df_result_global)} rows...")
+                                try:
+                                    viz_buf = generate_visualization(df_result_global)
+                                    if viz_buf:
+                                        buf_data = viz_buf.getvalue()
+                                        buf_size = len(buf_data)
+                                        logger.info(f"✓ Visualization buffer received: {buf_size} bytes")
+                                        if buf_size > 100:  # At least 100 bytes for a valid PNG
+                                            viz_b64 = encode_image(viz_buf)
+                                            if viz_b64:
+                                                logger.info(f"✓ Visualization encoded to base64: {len(viz_b64)} chars")
+                                            else:
+                                                logger.error("encode_image returned None")
+                                        else:
+                                            logger.warning(f"Visualization buffer too small: {buf_size} bytes (need >100)")
+                                            viz_b64 = None
+                                    else:
+                                        logger.warning("Visualization buffer is None")
+                                        viz_b64 = None
+                                except Exception as viz_err:
+                                    logger.error(f"Auto visualization failed: {viz_err}", exc_info=True)
+                                    viz_b64 = None
+                            else:
+                                logger.info(f"Skipping visualization: empty={df_result_global.empty}, rows={len(df_result_global)}")
+                            
                             explanation = explain_output(df_result_global, user_query)
                             # If forecast requested but result is empty, try using full table for forecasting
                             wants_forecast = any(k in user_query.lower() for k in ['forecast', 'predict'])
@@ -746,7 +807,9 @@ def index():
                                     base_df_for_analysis = execute_query_mysql(f"SELECT * FROM {session['table_name']}")
                                 except Exception:
                                     base_df_for_analysis = df_result_global
-                            df_forecast, charts = execute_advanced_analysis(base_df_for_analysis, user_query, generate_charts=generate_viz)
+                            
+                            # Always generate charts when data is available
+                            df_forecast, charts = execute_advanced_analysis(base_df_for_analysis, user_query, generate_charts=True)
                             # If we produced a forecast table, use it as the primary result to show and download
                             if wants_forecast and df_forecast is not None and not df_forecast.empty:
                                 df_result_global = df_forecast
@@ -759,6 +822,17 @@ def index():
                             df_sample = safe_read_json(session['df_sample'], 'split') if session.get('df_sample') else pd.DataFrame()
                             insights = session.get('insights', {})
                             session['active_tab'] = 'query'
+                            
+                            # Format result table with responsive container
+                            result_table_html = None
+                            if should_show_table(user_query, df_result_global):
+                                table_html = df_result_global.to_html(classes='table table-striped table-hover table-sm', escape=False, index=False)
+                                result_table_html = f"""
+                                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                                    {table_html}
+                                </div>
+                                """
+                            
                             return render_template(
                                 'index.html',
                                 table_name=session['table_name'],
@@ -766,7 +840,7 @@ def index():
                                 insights=insights,
                                 message=message,
                                 user_query=user_query,
-                                df_result=(df_result_global.to_html(classes='table table-striped table-responsive', escape=False) if should_show_table(user_query, df_result_global) else None),
+                                df_result=result_table_html,
                                 explanation=explanation,
                                 viz_b64=viz_b64,
                                 chart_b64s=chart_b64s,
