@@ -54,7 +54,12 @@ def generate_visualization(df: pd.DataFrame, chart_type: str = "auto", x: Option
         return buf
     
     plt.style.use('default')
-    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Adjust figure size based on number of rows
+    fig_width = max(10, min(16, len(df) * 0.8))
+    fig_height = 6
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    
     rec_type, rec_col = recommend_chart(df)
     if chart_type == "auto":
         chart_type = rec_type
@@ -70,18 +75,39 @@ def generate_visualization(df: pd.DataFrame, chart_type: str = "auto", x: Option
             y = y or (df.select_dtypes(include='number').columns.tolist()[0] if len(df.select_dtypes(include='number').columns) > 0 else None)
             if y is None:
                 raise ValueError("No numeric column available for bar chart")
-            ax.bar(df[x].astype(str), df[y], color='skyblue', alpha=0.7)
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
-            ax.set_title(f"{y} by {x}")
+            
+            # Create bar chart with better formatting
+            bars = ax.bar(df[x].astype(str), df[y], color='skyblue', alpha=0.7, edgecolor='navy')
+            ax.set_xlabel(x, fontsize=11, fontweight='bold')
+            ax.set_ylabel(y, fontsize=11, fontweight='bold')
+            ax.set_title(f"{y} by {x}", fontsize=13, fontweight='bold', pad=15)
+            
+            # Rotate x-axis labels if there are many categories
+            if len(df) > 5:
+                plt.xticks(rotation=45, ha='right')
+            
+            # Add value labels on bars
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{height:,.0f}', ha='center', va='bottom', fontsize=9)
+            
+            ax.grid(axis='y', alpha=0.3, linestyle='--')
+            
         elif chart_type == "line" and x and len(df.columns) > 1:
             y = y or (df.select_dtypes(include='number').columns.tolist()[0] if len(df.select_dtypes(include='number').columns) > 0 else None)
             if y is None:
                 raise ValueError("No numeric column available for line chart")
-            ax.plot(df[x].astype(str), df[y], marker='o', color='green', linewidth=2)
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
-            ax.set_title(f"{y} over {x}")
+            ax.plot(df[x].astype(str), df[y], marker='o', color='green', linewidth=2, markersize=8)
+            ax.set_xlabel(x, fontsize=11, fontweight='bold')
+            ax.set_ylabel(y, fontsize=11, fontweight='bold')
+            ax.set_title(f"{y} over {x}", fontsize=13, fontweight='bold', pad=15)
+            
+            # Rotate x-axis labels if there are many categories
+            if len(df) > 5:
+                plt.xticks(rotation=45, ha='right')
+            
+            ax.grid(True, alpha=0.3, linestyle='--')
         else:
             if len(df.select_dtypes(include='number').columns) > 0:
                 df.hist(ax=ax, color='lightblue')
