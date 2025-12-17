@@ -39,6 +39,20 @@ def prepare_query(sql: str, uploaded_files: list) -> str:
     return sql
 
 def generate_visualization(df: pd.DataFrame, chart_type: str = "auto", x: Optional[str] = None, y: Optional[str] = None) -> io.BytesIO:
+    # Validate input
+    if df is None or df.empty or len(df) < 2:
+        logger.warning(f"Cannot visualize: df empty or too few rows (rows={len(df) if df is not None else 0})")
+        # Return a placeholder image
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.text(0.5, 0.5, "Insufficient data for visualization\n(Need at least 2 rows)", 
+                ha='center', va='center', transform=ax.transAxes, fontsize=14, color='gray')
+        ax.axis('off')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        return buf
+    
     plt.style.use('default')
     fig, ax = plt.subplots(figsize=(10, 6))
     rec_type, rec_col = recommend_chart(df)

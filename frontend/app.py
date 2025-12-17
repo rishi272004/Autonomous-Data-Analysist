@@ -412,17 +412,22 @@ Provide concise, point-wise insights with specific numbers. Each point should be
             # Only generate visualization if data has multiple rows
             viz_b64 = None
             chart_b64s = []
-            if is_visualizable:
+            if is_visualizable and not df.empty and len(df) > 1:
                 try:
                     viz_buf = generate_visualization(df)
-                    viz_b64 = encode_image(viz_buf)
+                    if viz_buf and viz_buf.getvalue():  # Check if buffer has content
+                        viz_b64 = encode_image(viz_buf)
+                    else:
+                        logger.warning(f"Empty visualization buffer for {title}")
                     
                     _, charts = execute_advanced_analysis(df, purpose)
-                    chart_b64s = [(t, encode_image(b)) for t, b in charts]
+                    chart_b64s = [(t, encode_image(b)) for t, b in charts if b and b.getvalue()]
                 except Exception as viz_error:
-                    logger.warning(f"Visualization failed for {title}: {viz_error}")
+                    logger.error(f"Visualization failed for {title}: {viz_error}", exc_info=True)
                     viz_b64 = None
                     chart_b64s = []
+            else:
+                logger.info(f"Skipping visualization for {title}: rows={len(df)}, empty={df.empty}, visualizable={is_visualizable}")
 
             df_html = df.to_html(classes='table table-striped table-responsive', escape=False)
 

@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 # Look for .env in the project root directory
 env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path=env_path, override=True)  # override=True forces .env to take precedence
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,10 @@ if not GROQ_API_KEY:
     logger.error(f"Environment variables: {list(os.environ.keys())}")
     raise ValueError("Missing GROQ_API_KEY in environment variables")
 
+print(f"DEBUG: GROQ_API_KEY loaded: {GROQ_API_KEY[:20]}... (length: {len(GROQ_API_KEY)})")
 logger.info(f"GROQ_API_KEY loaded successfully (length: {len(GROQ_API_KEY)})")
 groq_client = Groq(api_key=GROQ_API_KEY)
+print(f"DEBUG: Groq client initialized")
 logger.info("Groq client initialized successfully")
 
 def query_gemini(prompt: str, model: str = "llama-3.3-70b-versatile") -> str:
